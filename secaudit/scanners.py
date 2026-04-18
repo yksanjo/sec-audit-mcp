@@ -205,7 +205,7 @@ def _check_terraform(text: str, path: str) -> list[Finding]:
         ))
 
     # No encryption at rest
-    if "aws_s3_bucket" in text and "server_side_encryption" not in text:
+    if "aws_s3_bucket" in text and "server_side_encryption_configuration" not in text:
         findings.append(Finding.make(
             title="S3 Bucket Without Encryption at Rest",
             severity=Severity.HIGH,

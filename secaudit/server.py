@@ -10,11 +10,23 @@ from .models import Finding
 
 app = Server("sec-audit-mcp")
 _findings: list[Finding] = []
+_seen_ids: set[str] = set()
 _target: str = ""
 
 
 def _fmt(obj) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(obj, indent=2, default=str))]
+
+
+def _add_findings(new: list[Finding]) -> list[Finding]:
+    """Deduplicate by finding id before accumulating."""
+    added = []
+    for f in new:
+        if f.id not in _seen_ids:
+            _seen_ids.add(f.id)
+            _findings.append(f)
+            added.append(f)
+    return added
 
 
 @app.list_tools()
@@ -88,50 +100,45 @@ async def list_tools() -> list[Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    global _findings, _target
+    global _findings, _seen_ids, _target
 
     if name == "audit_secrets":
         path = arguments["path"]
         _target = path
-        new = scan_secrets(path)
-        _findings.extend(new)
-        return _fmt({"scanner": "secrets", "path": path, "new_findings": len(new),
+        added = _add_findings(scan_secrets(path))
+        return _fmt({"scanner": "secrets", "path": path, "new_findings": len(added),
                      "total_findings": len(_findings),
-                     "findings": [f.model_dump() for f in new]})
+                     "findings": [f.model_dump() for f in added]})
 
     if name == "audit_code":
         path = arguments["path"]
         _target = path
-        new = scan_code(path, arguments.get("languages"))
-        _findings.extend(new)
-        return _fmt({"scanner": "code", "path": path, "new_findings": len(new),
+        added = _add_findings(scan_code(path, arguments.get("languages")))
+        return _fmt({"scanner": "code", "path": path, "new_findings": len(added),
                      "total_findings": len(_findings),
-                     "findings": [f.model_dump() for f in new]})
+                     "findings": [f.model_dump() for f in added]})
 
     if name == "audit_cloud":
         path = arguments["path"]
         _target = path
-        new = scan_cloud_config(path)
-        _findings.extend(new)
-        return _fmt({"scanner": "cloud", "path": path, "new_findings": len(new),
+        added = _add_findings(scan_cloud_config(path))
+        return _fmt({"scanner": "cloud", "path": path, "new_findings": len(added),
                      "total_findings": len(_findings),
-                     "findings": [f.model_dump() for f in new]})
+                     "findings": [f.model_dump() for f in added]})
 
     if name == "audit_all":
         path = arguments["path"]
         _target = path
-        s = scan_secrets(path)
-        c = scan_code(path)
-        cl = scan_cloud_config(path)
-        all_new = s + c + cl
-        _findings.extend(all_new)
+        s = _add_findings(scan_secrets(path))
+        c = _add_findings(scan_code(path))
+        cl = _add_findings(scan_cloud_config(path))
         return _fmt({
             "scanner": "all",
             "path": path,
             "secrets": len(s),
             "code": len(c),
             "cloud": len(cl),
-            "total_new": len(all_new),
+            "total_new": len(s) + len(c) + len(cl),
             "total_accumulated": len(_findings),
         })
 
@@ -158,6 +165,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if name == "clear_findings":
         _findings = []
+        _seen_ids = set()
         _target = ""
         return _fmt({"status": "cleared"})
 
